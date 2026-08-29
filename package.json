@@ -1,0 +1,18 @@
+{
+  "name": "docappoint-backend",
+  "version": "1.0.0",
+  "description": "Doctor Appointment Booking Express Backend",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "better-auth": "^1.7.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jose": "^5.9.6",
+    "mongodb": "^6.12.0"
+  }
+}
