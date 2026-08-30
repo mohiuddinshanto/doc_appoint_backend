@@ -9,18 +9,32 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-app.use(cors({ origin: process.env.CLIENT_URI }));
+const allowedOrigins = process.env.CLIENT_URI
+  ? process.env.CLIENT_URI.split(',').map((origin) => origin.trim()).filter(Boolean)
+  : [];
+
+app.use(cors({
+  origin(origin, callback) {
+    // Requests from tools such as curl do not include an Origin header.
+    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Origin is not allowed by CORS'));
+  }
+}));
 app.use(express.json());
 
-const uri = process.env.MONGODB_URI ;
+const uri = process.env.MONGODB_URI;
 
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
-});
+const client = uri
+  ? new MongoClient(uri, {
+      serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+      }
+    })
+  : null;
 
 let db, doctorsCollection, appointsCollection;
 
@@ -59,17 +73,16 @@ const verifyToken = async (req, res, next) => {
 };
 
 async function connectDB() {
+  if (!client) {
+    console.warn('MONGODB_URI is not configured. Database routes will be unavailable.');
+    return;
+  }
+
   try {
     await client.connect();
     db = client.db('docappoint_db');
     doctorsCollection = db.collection('doctors');
     appointsCollection = db.collection('appoints');
-
-    const count = await doctorsCollection.countDocuments();
-    if (count === 0) {
-      await doctorsCollection.insertMany(initialDoctors);
-      console.log("Seeded initial doctors database in MongoDB!");
-    }
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } catch (err) {
     console.warn("MongoDB connection warning (running with in-memory store):", err.message);
@@ -117,21 +130,7 @@ app.get('/doctors', async (req, res) => {
     }
   }
 
-  // Fallback in-memory doctor search
-  let result = initialDoctors;
-  if (search) {
-    const term = search.toLowerCase();
-    result = result.filter(
-      (d) => d.name.toLowerCase().includes(term) || d.specialty.toLowerCase().includes(term)
-    );
-  }
-  if (specialty && specialty !== 'All Specialties') {
-    const spec = specialty.toLowerCase();
-    result = result.filter(
-      (d) => d.specialty.toLowerCase() === spec
-    );
-  }
-  res.send(result);
+  res.status(503).json({ message: 'Doctors are temporarily unavailable. Please try again shortly.' });
 });
 
 app.get('/doctors/:id', verifyToken, async (req, res) => {
@@ -145,11 +144,7 @@ app.get('/doctors/:id', verifyToken, async (req, res) => {
     }
   }
 
-  const found = initialDoctors.find((d) => d._id === id || d._id.toString() === id);
-  if (!found) {
-    return res.status(404).json({ message: "Doctor not found" });
-  }
-  res.send(found);
+  res.status(503).json({ message: 'Doctors are temporarily unavailable. Please try again shortly.' });
 });
 
 // ================================= Appoints API ============================================
@@ -242,4 +237,3 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 module.exports = app;
-
