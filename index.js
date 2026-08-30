@@ -9,7 +9,7 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-app.use(cors({ origin: process.env.CLIENT_URI || 'http://localhost:3000' }));
+app.use(cors({ origin: process.env.CLIENT_URI }));
 app.use(express.json());
 
 const uri = process.env.MONGODB_URI ;
@@ -24,99 +24,13 @@ const client = new MongoClient(uri, {
 
 let db, doctorsCollection, appointsCollection;
 
-const initialDoctors = [
-  {
-    name: "Dr. Sarah Jenkins",
-    specialty: "Cardiology",
-    title: "Senior Cardiologist & Heart Specialist",
-    experienceYears: 14,
-    rating: 4.9,
-    reviewCount: 128,
-    price: 150,
-    currency: "USD",
-    avatar: "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?auto=format&fit=crop&q=80&w=400",
-    location: "Heart & Vascular Center, Suite 402",
-    bio: "Dr. Sarah Jenkins is a board-certified cardiologist with over 14 years of clinical experience in preventative cardiology, hypertension, and advanced heart health.",
-    availableDays: ["Mon", "Wed", "Fri"]
-  },
-  {
-    name: "Dr. Marcus Vance",
-    specialty: "Dermatology",
-    title: "Consultant Dermatologist",
-    experienceYears: 10,
-    rating: 4.8,
-    reviewCount: 96,
-    price: 120,
-    currency: "USD",
-    avatar: "https://images.unsplash.com/photo-1622253692010-333f2da6031d?auto=format&fit=crop&q=80&w=400",
-    location: "SkinCare Clinic, 2nd Floor",
-    bio: "Specialising in medical and cosmetic dermatology, Dr. Vance treats acne, eczema, psoriasis, and provides comprehensive skin wellness consultations.",
-    availableDays: ["Tue", "Thu", "Sat"]
-  },
-  {
-    name: "Dr. Elena Rostova",
-    specialty: "Neurology",
-    title: "Chief Neurologist & Brain Specialist",
-    experienceYears: 16,
-    rating: 5.0,
-    reviewCount: 210,
-    price: 180,
-    currency: "USD",
-    avatar: "https://images.unsplash.com/photo-1594824813566-88855ce78907?auto=format&fit=crop&q=80&w=400",
-    location: "Neuroscience Institute, Block B",
-    bio: "Dr. Rostova specializes in migraine treatment, stroke prevention, neurodegenerative conditions, and comprehensive neurological evaluations.",
-    availableDays: ["Mon", "Tue", "Thu"]
-  },
-  {
-    name: "Dr. James Wilson",
-    specialty: "Pediatrics",
-    title: "Senior Pediatrician",
-    experienceYears: 12,
-    rating: 4.9,
-    reviewCount: 154,
-    price: 100,
-    currency: "USD",
-    avatar: "https://images.unsplash.com/photo-1537368910025-700350fe46c7?auto=format&fit=crop&q=80&w=400",
-    location: "Children's Health Pavilion, Room 105",
-    bio: "Passionate about child development and wellness, Dr. Wilson provides warm, attentive pediatric care from newborn visits to adolescent health.",
-    availableDays: ["Mon", "Wed", "Sat"]
-  },
-  {
-    name: "Dr. Aisha Patel",
-    specialty: "Orthopedics",
-    title: "Orthopedic Surgeon & Joint Care Specialist",
-    experienceYears: 11,
-    rating: 4.8,
-    reviewCount: 88,
-    price: 160,
-    currency: "USD",
-    avatar: "https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&q=80&w=400",
-    location: "Bone & Joint Clinic, Suite 301",
-    bio: "Expert in sports injuries, knee and hip replacements, and non-surgical joint treatments.",
-    availableDays: ["Wed", "Fri", "Sat"]
-  },
-  {
-    name: "Dr. Robert Chen",
-    specialty: "General Medicine",
-    title: "Primary Care Physician",
-    experienceYears: 9,
-    rating: 4.7,
-    reviewCount: 76,
-    price: 90,
-    currency: "USD",
-    avatar: "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&q=80&w=400",
-    location: "Community Wellness Center",
-    bio: "Dr. Chen focuses on holistic primary care, routine checkups, chronic disease management, and preventative health guidance.",
-    availableDays: ["Mon", "Tue", "Wed", "Thu", "Fri"]
-  }
-];
 
 let inMemoryAppoints = [];
 
 let JWKS;
 const getJWKS = () => {
   if (!JWKS) {
-    const clientUri = process.env.CLIENT_URI || 'http://localhost:3000';
+    const clientUri = process.env.CLIENT_URI;
     const jwksUrl = new URL(`${clientUri}/api/auth/jwks`);
     JWKS = createRemoteJWKSet(jwksUrl);
   }
@@ -134,7 +48,7 @@ const verifyToken = async (req, res, next) => {
   }
   try {
     const jwks = getJWKS();
-    const { payload } = await jwtVerify(token, jwks, { issuer: process.env.CLIENT_URI || 'http://localhost:3000', audience: process.env.CLIENT_URI || 'http://localhost:3000' });
+    const { payload } = await jwtVerify(token, jwks, { issuer: process.env.CLIENT_URI, audience: process.env.CLIENT_URI });
     req.user = payload;
     console.log("Verified Better Auth Token Payload:", payload);
     next();
