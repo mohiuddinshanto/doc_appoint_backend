@@ -207,14 +207,17 @@ app.get('/appoints/:userId', verifyToken, async (req, res) => {
 
 app.get('/appoints', verifyToken, async (req, res) => {
   await connectDB();
+  // Never return every patient's bookings to an authenticated user. The
+  // identity comes from the verified JWT, not from a client-provided value.
+  const userId = req.user.sub;
   if (appointsCollection) {
     try {
-      const result = await appointsCollection.find().toArray();
+      const result = await appointsCollection.find({ userId }).toArray();
       return res.json(result);
     } catch (e) { }
   }
 
-  res.json(inMemoryAppoints);
+  res.json(inMemoryAppoints.filter((appointment) => appointment.userId === userId));
 });
 
 app.post('/appoints', verifyToken, async (req, res) => {
