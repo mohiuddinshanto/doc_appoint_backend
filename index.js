@@ -9,16 +9,34 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-const allowedOrigins = process.env.CLIENT_URI
-  ? process.env.CLIENT_URI.split(',').map((origin) => origin.trim()).filter(Boolean)
-  : [];
+const normalizeOrigins = (rawValue = '') =>
+  rawValue
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+    .filter((origin, index, arr) => arr.indexOf(origin) === index);
+
+const allowedOrigins = normalizeOrigins(
+  [
+    process.env.CLIENT_URI,
+    process.env.FRONTEND_URL,
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '',
+    'http://localhost:3000',
+    'http://localhost:3001',
+  ].join(',')
+);
 
 app.use(cors({
   origin(origin, callback) {
-    // Requests from tools such as curl do not include an Origin header.
-    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+    if (!origin) {
       return callback(null, true);
     }
+
+    if (allowedOrigins.includes(origin) || /https:\/\/.*\.vercel\.app$/i.test(origin)) {
+      return callback(null, true);
+    }
+
     return callback(new Error('Origin is not allowed by CORS'));
   }
 }));
@@ -28,12 +46,12 @@ const uri = process.env.MONGODB_URI;
 
 const client = uri
   ? new MongoClient(uri, {
-      serverApi: {
-        version: ServerApiVersion.v1,
-        strict: true,
-        deprecationErrors: true,
-      }
-    })
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: true,
+      deprecationErrors: true,
+    }
+  })
   : null;
 
 let db, doctorsCollection, appointsCollection;
@@ -42,10 +60,16 @@ let db, doctorsCollection, appointsCollection;
 let inMemoryAppoints = [];
 
 let JWKS;
+const getClientUri = () => {
+  if (process.env.CLIENT_URI) return process.env.CLIENT_URI;
+  if (allowedOrigins.length > 0) return allowedOrigins[0];
+  return 'http://localhost:3000';
+};
+
 const getJWKS = () => {
   if (!JWKS) {
-    const clientUri = process.env.CLIENT_URI;
-    const jwksUrl = new URL(`${clientUri}/api/auth/jwks`);
+    const clientUri = getClientUri();
+    const jwksUrl = new URL(`${clientUri.replace(/\/$/, '')}/api/auth/jwks`);
     JWKS = createRemoteJWKSet(jwksUrl);
   }
   return JWKS;
@@ -62,7 +86,11 @@ const verifyToken = async (req, res, next) => {
   }
   try {
     const jwks = getJWKS();
-    const { payload } = await jwtVerify(token, jwks, { issuer: process.env.CLIENT_URI, audience: process.env.CLIENT_URI });
+    const validIssuers = [...new Set([process.env.CLIENT_URI, ...allowedOrigins].filter(Boolean))];
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer: validIssuers,
+      audience: validIssuers,
+    });
     req.user = payload;
     console.log("Verified Better Auth Token Payload:", payload);
     next();
@@ -156,7 +184,7 @@ app.get('/appoints/:userId', verifyToken, async (req, res) => {
       const query = { userId: userId };
       const result = await appointsCollection.find(query).toArray();
       return res.json(result);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   const userAppts = inMemoryAppoints.filter((a) => a.userId === userId);
@@ -168,7 +196,7 @@ app.get('/appoints', verifyToken, async (req, res) => {
     try {
       const result = await appointsCollection.find().toArray();
       return res.json(result);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   res.json(inMemoryAppoints);
@@ -207,7 +235,7 @@ app.patch('/appoints/:id', verifyToken, async (req, res) => {
         { $set: updatedData }
       );
       return res.json(result);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   const index = inMemoryAppoints.findIndex((a) => (a._id === id || a.id === id) && a.userId === req.user.sub);
@@ -223,7 +251,7 @@ app.delete('/appoints/:id', verifyToken, async (req, res) => {
     try {
       const result = await appointsCollection.deleteOne({ _id: new ObjectId(id), userId: req.user.sub });
       return res.json(result);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   inMemoryAppoints = inMemoryAppoints.filter((a) => (a._id !== id && a.id !== id) || a.userId !== req.user.sub);
