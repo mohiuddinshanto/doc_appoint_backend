@@ -235,8 +235,11 @@ app.delete('/appoints/:id', verifyToken, async (req, res) => {
   res.json({ deletedCount: 1 });
 });
 
-app.listen(port, () => {
-  console.log(`Backend server listening on port ${port}`);
-});
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(port, () => {
+    console.log(`Backend server listening on port ${port}`);
+  });
+}
 
+module.exports = app;
 
