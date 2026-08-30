@@ -55,6 +55,7 @@ const client = uri
   : null;
 
 let db, doctorsCollection, appointsCollection;
+let connectionPromise;
 
 
 let inMemoryAppoints = [];
@@ -106,15 +107,25 @@ async function connectDB() {
     return;
   }
 
-  try {
-    await client.connect();
-    db = client.db('docappoint_db');
-    doctorsCollection = db.collection('doctors');
-    appointsCollection = db.collection('appoints');
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } catch (err) {
-    console.warn("MongoDB connection warning (running with in-memory store):", err.message);
+  if (!connectionPromise) {
+    connectionPromise = client
+      .connect()
+      .then(() => {
+        db = client.db('docappoint_db');
+        doctorsCollection = db.collection('doctors');
+        appointsCollection = db.collection('appoints');
+        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+      })
+      .catch((err) => {
+        // Allow a later serverless invocation to retry after a transient failure.
+        connectionPromise = undefined;
+        console.warn("MongoDB connection warning (running with in-memory store):", err.message);
+      });
   }
+
+  // Vercel may receive a request while a cold instance is still connecting.
+  // Every database route must wait for that shared connection attempt.
+  await connectionPromise;
 }
 
 connectDB();
@@ -126,6 +137,7 @@ app.get('/', (req, res) => {
 
 // ================================= Doctors API ============================================
 app.get('/doctors', async (req, res) => {
+  await connectDB();
   const { search, specialty } = req.query;
   let query = {};
 
@@ -162,6 +174,7 @@ app.get('/doctors', async (req, res) => {
 });
 
 app.get('/doctors/:id', verifyToken, async (req, res) => {
+  await connectDB();
   const id = req.params.id;
   if (doctorsCollection) {
     try {
@@ -177,6 +190,7 @@ app.get('/doctors/:id', verifyToken, async (req, res) => {
 
 // ================================= Appoints API ============================================
 app.get('/appoints/:userId', verifyToken, async (req, res) => {
+  await connectDB();
   const { userId } = req.params;
   if (userId !== req.user.sub) return res.status(403).json({ message: "Forbidden" });
   if (appointsCollection) {
@@ -192,6 +206,7 @@ app.get('/appoints/:userId', verifyToken, async (req, res) => {
 });
 
 app.get('/appoints', verifyToken, async (req, res) => {
+  await connectDB();
   if (appointsCollection) {
     try {
       const result = await appointsCollection.find().toArray();
@@ -203,6 +218,7 @@ app.get('/appoints', verifyToken, async (req, res) => {
 });
 
 app.post('/appoints', verifyToken, async (req, res) => {
+  await connectDB();
   const appointsData = req.body;
   const userId = req.user.sub;
   const newAppt = {
@@ -224,6 +240,7 @@ app.post('/appoints', verifyToken, async (req, res) => {
 });
 
 app.patch('/appoints/:id', verifyToken, async (req, res) => {
+  await connectDB();
   const { id } = req.params;
   const updatedData = req.body;
   console.log("Update appointment:", id, updatedData);
@@ -246,6 +263,7 @@ app.patch('/appoints/:id', verifyToken, async (req, res) => {
 });
 
 app.delete('/appoints/:id', verifyToken, async (req, res) => {
+  await connectDB();
   const { id } = req.params;
   if (appointsCollection) {
     try {
