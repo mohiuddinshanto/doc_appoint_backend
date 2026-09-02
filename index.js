@@ -56,6 +56,7 @@ const client = uri
 
 let db, doctorsCollection, appointsCollection;
 let connectionPromise;
+let appointmentIndexReady = false;
 
 
 let inMemoryAppoints = [];
@@ -110,11 +111,32 @@ async function connectDB() {
   if (!connectionPromise) {
     connectionPromise = client
       .connect()
-      .then(() => {
+      .then(async () => {
         db = client.db('docappoint_db');
         doctorsCollection = db.collection('doctors');
         appointsCollection = db.collection('appoints');
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
+
+        // Only active appointments reserve a slot. This is the authoritative
+        // race-condition guard: two concurrent inserts for the same slot
+        // cannot both succeed.
+        try {
+          await appointsCollection.createIndex(
+            { compositeSlotKey: 1 },
+            {
+              name: 'unique_upcoming_composite_slot',
+              unique: true,
+              partialFilterExpression: { status: 'upcoming' },
+            }
+          );
+          appointmentIndexReady = true;
+        } catch (error) {
+          // Do not accept bookings without the race-condition guard. Most
+          // commonly this means existing duplicate upcoming records must be
+          // resolved before the partial unique index can be created.
+          appointmentIndexReady = false;
+          console.error('Appointment unique index is unavailable:', error.message);
+        }
       })
       .catch((err) => {
         // Allow a later serverless invocation to retry after a transient failure.
@@ -189,6 +211,39 @@ app.get('/doctors/:id', verifyToken, async (req, res) => {
 });
 
 // ================================= Appoints API ============================================
+// This endpoint intentionally exposes availability only, never appointment or
+// patient details. It is safe for the slot-picker to call for every user.
+// Keep it before `/appoints/:userId`, otherwise Express would treat
+// "availability" as a user ID.
+app.get('/appoints/availability', async (req, res) => {
+  await connectDB();
+  const { serviceId, date } = req.query;
+
+  if (typeof serviceId !== 'string' || typeof date !== 'string' || !serviceId || !date) {
+    return res.status(400).json({ message: 'serviceId and date are required.' });
+  }
+
+  if (appointsCollection) {
+    try {
+      const appointments = await appointsCollection
+        .find(
+          { serviceId, date, status: 'upcoming' },
+          { projection: { compositeSlotKey: 1 } }
+        )
+        .toArray();
+      return res.json({
+        bookedSlotKeys: appointments
+          .map((appointment) => appointment.compositeSlotKey)
+          .filter((key) => typeof key === 'string'),
+      });
+    } catch (e) {
+      return res.status(500).json({ message: 'Unable to load slot availability.' });
+    }
+  }
+
+  res.status(503).json({ message: 'MongoDB is unavailable.' });
+});
+
 app.get('/appoints/:userId', verifyToken, async (req, res) => {
   await connectDB();
   const { userId } = req.params;
@@ -224,17 +279,50 @@ app.post('/appoints', verifyToken, async (req, res) => {
   await connectDB();
   const appointsData = req.body;
   const userId = req.user.sub;
+  const { compositeSlotKey, serviceId, date, slotId } = appointsData;
+
+  if (
+    typeof compositeSlotKey !== 'string' ||
+    typeof serviceId !== 'string' ||
+    typeof date !== 'string' ||
+    typeof slotId !== 'string' ||
+    compositeSlotKey !== `${serviceId}::${date}::${slotId}`
+  ) {
+    return res.status(400).json({ message: 'Invalid appointment slot.' });
+  }
+
   const newAppt = {
     ...appointsData,
     userId,
+    // The client must not be able to create a non-reserving appointment.
+    status: 'upcoming',
     createdAt: new Date().toISOString()
   };
 
   if (appointsCollection) {
+    if (!appointmentIndexReady) {
+      return res.status(503).json({
+        message: 'Booking is temporarily unavailable while appointment data is being secured.',
+      });
+    }
+
     try {
+      // Gives a clear response in the normal case. The unique index below is
+      // still required because this check and insert are not atomic together.
+      const existing = await appointsCollection.findOne({
+        compositeSlotKey,
+        status: 'upcoming',
+      });
+      if (existing) {
+        return res.status(409).json({ message: 'This slot is already booked.' });
+      }
+
       const result = await appointsCollection.insertOne(newAppt);
       return res.json({ _id: result.insertedId.toString(), acknowledged: result.acknowledged });
     } catch (e) {
+      if (e && e.code === 11000) {
+        return res.status(409).json({ message: 'This slot is already booked.' });
+      }
       return res.status(500).json({ message: "Unable to create the appointment." });
     }
   }
