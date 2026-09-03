@@ -77,6 +77,59 @@ const getJWKS = () => {
   return JWKS;
 };
 
+/**
+ * Repairs legacy data before creating the unique active-slot index. Earlier
+ * versions allowed duplicate upcoming appointments for the same slot. Keep
+ * the oldest record and cancel the later duplicates so no booking history is
+ * discarded and the database can enforce the invariant going forward.
+ */
+async function resolveDuplicateUpcomingAppointments() {
+  const duplicateGroups = await appointsCollection
+    .aggregate([
+      {
+        $match: {
+          status: 'upcoming',
+          compositeSlotKey: { $type: 'string' },
+        },
+      },
+      { $sort: { createdAt: 1, bookedAt: 1, _id: 1 } },
+      {
+        $group: {
+          _id: '$compositeSlotKey',
+          appointmentIds: { $push: '$_id' },
+          count: { $sum: 1 },
+        },
+      },
+      { $match: { count: { $gt: 1 } } },
+    ])
+    .toArray();
+
+  if (duplicateGroups.length === 0) return 0;
+
+  const cancelledAt = new Date().toISOString();
+  let resolvedCount = 0;
+
+  for (const group of duplicateGroups) {
+    const duplicateIds = group.appointmentIds.slice(1);
+    const result = await appointsCollection.updateMany(
+      { _id: { $in: duplicateIds }, status: 'upcoming' },
+      {
+        $set: {
+          status: 'cancelled',
+          cancelledAt,
+          cancellationReason: 'Automatically cancelled duplicate appointment slot.',
+        },
+      }
+    );
+    resolvedCount += result.modifiedCount;
+  }
+
+  console.warn(
+    `Resolved ${resolvedCount} duplicate upcoming appointment(s) across ${duplicateGroups.length} slot(s).`
+  );
+  return resolvedCount;
+}
+
 const verifyToken = async (req, res, next) => {
   const header = req?.headers.authorization;
   if (!header) {
@@ -121,6 +174,7 @@ async function connectDB() {
         // race-condition guard: two concurrent inserts for the same slot
         // cannot both succeed.
         try {
+          await resolveDuplicateUpcomingAppointments();
           await appointsCollection.createIndex(
             { compositeSlotKey: 1 },
             {
