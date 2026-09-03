@@ -251,6 +251,9 @@ app.get('/doctors/:id', verifyToken, async (req, res) => {
 // Keep it before `/appoints/:userId`, otherwise Express would treat
 // "availability" as a user ID.
 app.get('/appoints/availability', async (req, res) => {
+  // Availability must always be fresh: a stale CDN/browser response could
+  // otherwise make an already booked slot look available to another user.
+  res.set('Cache-Control', 'no-store, max-age=0');
   await connectDB();
   const { serviceId, date } = req.query;
 
