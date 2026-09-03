@@ -77,57 +77,38 @@ const getJWKS = () => {
   return JWKS;
 };
 
-/**
- * Repairs legacy data before creating the unique active-slot index. Earlier
- * versions allowed duplicate upcoming appointments for the same slot. Keep
- * the oldest record and cancel the later duplicates so no booking history is
- * discarded and the database can enforce the invariant going forward.
- */
+// Keep the first booking for each slot and cancel old duplicate records.
 async function resolveDuplicateUpcomingAppointments() {
-  const duplicateGroups = await appointsCollection
-    .aggregate([
-      {
-        $match: {
-          status: 'upcoming',
-          compositeSlotKey: { $type: 'string' },
-        },
-      },
-      { $sort: { createdAt: 1, bookedAt: 1, _id: 1 } },
-      {
-        $group: {
-          _id: '$compositeSlotKey',
-          appointmentIds: { $push: '$_id' },
-          count: { $sum: 1 },
-        },
-      },
-      { $match: { count: { $gt: 1 } } },
-    ])
+  const appointments = await appointsCollection
+    .find({ status: 'upcoming', compositeSlotKey: { $type: 'string' } })
+    .sort({ createdAt: 1, bookedAt: 1, _id: 1 })
     .toArray();
 
-  if (duplicateGroups.length === 0) return 0;
+  const usedSlots = new Set();
+  const duplicateIds = [];
 
-  const cancelledAt = new Date().toISOString();
-  let resolvedCount = 0;
-
-  for (const group of duplicateGroups) {
-    const duplicateIds = group.appointmentIds.slice(1);
-    const result = await appointsCollection.updateMany(
-      { _id: { $in: duplicateIds }, status: 'upcoming' },
-      {
-        $set: {
-          status: 'cancelled',
-          cancelledAt,
-          cancellationReason: 'Automatically cancelled duplicate appointment slot.',
-        },
-      }
-    );
-    resolvedCount += result.modifiedCount;
+  for (const appointment of appointments) {
+    if (usedSlots.has(appointment.compositeSlotKey)) {
+      duplicateIds.push(appointment._id);
+    } else {
+      usedSlots.add(appointment.compositeSlotKey);
+    }
   }
 
-  console.warn(
-    `Resolved ${resolvedCount} duplicate upcoming appointment(s) across ${duplicateGroups.length} slot(s).`
+  if (duplicateIds.length === 0) return;
+
+  await appointsCollection.updateMany(
+    { _id: { $in: duplicateIds }, status: 'upcoming' },
+    {
+      $set: {
+        status: 'cancelled',
+        cancelledAt: new Date().toISOString(),
+        cancellationReason: 'Duplicate booking for the same slot.',
+      },
+    }
   );
-  return resolvedCount;
+
+  console.warn(`Cancelled ${duplicateIds.length} old duplicate appointment(s).`);
 }
 
 const verifyToken = async (req, res, next) => {
