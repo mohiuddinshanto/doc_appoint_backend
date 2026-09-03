@@ -59,8 +59,6 @@ let connectionPromise;
 let appointmentIndexReady = false;
 
 
-let inMemoryAppoints = [];
-
 let JWKS;
 const getClientUri = () => {
   if (process.env.CLIENT_URI) return process.env.CLIENT_URI;
@@ -230,26 +228,9 @@ app.get('/doctors', async (req, res) => {
   res.status(503).json({ message: 'Doctors are temporarily unavailable. Please try again shortly.' });
 });
 
-app.get('/doctors/:id', verifyToken, async (req, res) => {
-  await connectDB();
-  const id = req.params.id;
-  if (doctorsCollection) {
-    try {
-      const doctor = await doctorsCollection.findOne({ _id: new ObjectId(id) });
-      if (doctor) return res.send(doctor);
-    } catch (e) {
-      // fallback
-    }
-  }
-
-  res.status(503).json({ message: 'Doctors are temporarily unavailable. Please try again shortly.' });
-});
-
 // ================================= Appoints API ============================================
 // This endpoint intentionally exposes availability only, never appointment or
 // patient details. It is safe for the slot-picker to call for every user.
-// Keep it before `/appoints/:userId`, otherwise Express would treat
-// "availability" as a user ID.
 app.get('/appoints/availability', async (req, res) => {
   // Availability must always be fresh: a stale CDN/browser response could
   // otherwise make an already booked slot look available to another user.
@@ -282,22 +263,6 @@ app.get('/appoints/availability', async (req, res) => {
   res.status(503).json({ message: 'MongoDB is unavailable.' });
 });
 
-app.get('/appoints/:userId', verifyToken, async (req, res) => {
-  await connectDB();
-  const { userId } = req.params;
-  if (userId !== req.user.sub) return res.status(403).json({ message: "Forbidden" });
-  if (appointsCollection) {
-    try {
-      const query = { userId: userId };
-      const result = await appointsCollection.find(query).toArray();
-      return res.json(result);
-    } catch (e) { }
-  }
-
-  const userAppts = inMemoryAppoints.filter((a) => a.userId === userId);
-  res.json(userAppts);
-});
-
 app.get('/appoints', verifyToken, async (req, res) => {
   await connectDB();
   // Never return every patient's bookings to an authenticated user. The
@@ -310,7 +275,7 @@ app.get('/appoints', verifyToken, async (req, res) => {
     } catch (e) { }
   }
 
-  res.json(inMemoryAppoints.filter((appointment) => appointment.userId === userId));
+  res.status(503).json({ message: 'MongoDB is unavailable.' });
 });
 
 app.post('/appoints', verifyToken, async (req, res) => {
@@ -384,25 +349,7 @@ app.patch('/appoints/:id', verifyToken, async (req, res) => {
     } catch (e) { }
   }
 
-  const index = inMemoryAppoints.findIndex((a) => (a._id === id || a.id === id) && a.userId === req.user.sub);
-  if (index !== -1) {
-    inMemoryAppoints[index] = { ...inMemoryAppoints[index], ...updatedData };
-  }
-  res.json({ modifiedCount: 1 });
-});
-
-app.delete('/appoints/:id', verifyToken, async (req, res) => {
-  await connectDB();
-  const { id } = req.params;
-  if (appointsCollection) {
-    try {
-      const result = await appointsCollection.deleteOne({ _id: new ObjectId(id), userId: req.user.sub });
-      return res.json(result);
-    } catch (e) { }
-  }
-
-  inMemoryAppoints = inMemoryAppoints.filter((a) => (a._id !== id && a.id !== id) || a.userId !== req.user.sub);
-  res.json({ deletedCount: 1 });
+  res.status(503).json({ message: 'MongoDB is unavailable.' });
 });
 
 if (process.env.NODE_ENV !== 'production') {
